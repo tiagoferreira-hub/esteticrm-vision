@@ -5,7 +5,8 @@ import { Conversation, Message } from "@/context/ConversationsContext";
 import { useCompanyMembers } from "@/hooks/useCompanyMembers";
 import { useTags } from "@/context/TagsContext";
 import { useLeadHistory } from "@/hooks/useLeadHistory";
-import { usePlaybooks } from "@/context/PlaybooksContext";
+import { useScriptPanel } from "@/hooks/useScriptPanel";
+import { tokenizeTemplate } from "@/lib/scriptTemplate";
 import ServiceBadges from "@/components/crm/ServiceBadges";
 import { cn } from "@/lib/utils";
 
@@ -39,14 +40,10 @@ const ConversationRightSidebar: React.FC<Props> = ({
   const members = useCompanyMembers();
   const { tagsForLead } = useTags();
   const history = useLeadHistory(lead?.id);
-  const { scripts, recordUsage } = usePlaybooks();
-  const [scriptOverrideId, setScriptOverrideId] = useState<string | null>(null);
-
-  const activeScript = useMemo(() => {
-    if (!lead) return null;
-    if (scriptOverrideId) return scripts.find(s => s.id === scriptOverrideId) ?? null;
-    return scripts.find(s => s.stage === lead.stage && s.isActive) ?? null;
-  }, [lead, scripts, scriptOverrideId]);
+  const {
+    scripts, activeScript, overrideId: scriptOverrideId,
+    setOverrideId: setScriptOverrideId, blocks: scriptBlocks, vars: scriptVars, insertBlock,
+  } = useScriptPanel(lead, conversation);
 
 
   const owner = lead?.assignedTo ? members.find(m => m.userId === lead.assignedTo) : null;
@@ -91,17 +88,24 @@ const ConversationRightSidebar: React.FC<Props> = ({
     { key: "script", icon: BookOpen, label: "Script" },
   ];
 
-  const scriptBlocks = useMemo(
-    () => (activeScript?.content ?? "").split(/\n{2,}/).map(b => b.trim()).filter(Boolean),
-    [activeScript]
+  /** Bloco renderizado com as variáveis resolvidas; as vazias ficam destacadas. */
+  const ScriptBlockText: React.FC<{ block: string }> = ({ block }) => (
+    <p className="text-xs text-foreground whitespace-pre-wrap">
+      {tokenizeTemplate(block, scriptVars).map((seg, i) =>
+        seg.kind === "missing" ? (
+          <mark
+            key={i}
+            title="Variável sem valor — preencha antes de enviar"
+            className="bg-crm-warning-light text-crm-warning font-medium rounded px-0.5"
+          >
+            {seg.text}
+          </mark>
+        ) : (
+          <React.Fragment key={i}>{seg.text}</React.Fragment>
+        )
+      )}
+    </p>
   );
-
-  const handleUseBlock = (text: string) => {
-    window.dispatchEvent(new CustomEvent("crm:scriptInsert", { detail: { text } }));
-    if (activeScript && conversation && lead) {
-      recordUsage(activeScript.id, conversation.id, lead.id, lead.stage);
-    }
-  };
 
 
   const handleClick = (k: RightPanelKey) => {
@@ -305,9 +309,9 @@ const ConversationRightSidebar: React.FC<Props> = ({
                       <ul className="space-y-2">
                         {scriptBlocks.map((block, i) => (
                           <li key={i} className="bg-muted/40 border border-border rounded-md p-2 group">
-                            <p className="text-xs text-foreground whitespace-pre-wrap">{block}</p>
+                            <ScriptBlockText block={block} />
                             <button
-                              onClick={() => handleUseBlock(block)}
+                              onClick={() => insertBlock(block)}
                               className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
                             >
                               <Copy className="w-3 h-3" /> Usar
